@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import datetime
 import os
 
@@ -10,12 +11,32 @@ st.set_page_config(page_title="Spiermassa Calculator")
 st.title("Spiermassa Berekening")
 
 # ======================
-# CSV inladen
+# Database setup (PERMANENT)
+# ======================
+conn = sqlite3.connect("metingen.db", check_same_thread=False)
+c = conn.cursor()
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS metingen (
+    id TEXT,
+    gender TEXT,
+    lengte REAL,
+    gewicht REAL,
+    resistentie REAL,
+    spiermassa REAL,
+    datum TEXT
+)
+""")
+
+conn.commit()
+
+# ======================
+# CSV met basisgegevens laden
 # ======================
 bestand = "gegevens.csv"
 
 if not os.path.exists(bestand):
-    st.error(f"Kan bestand niet vinden: {bestand}. Zorg dat het in dezelfde map staat als app.py.")
+    st.error(f"Kan bestand niet vinden: {bestand}. Zorg dat het in dezelfde map staat.")
     st.stop()
 
 basis = pd.read_csv(bestand)
@@ -63,9 +84,6 @@ elif geslacht_txt == "Vrouw":
 else:
     sex_janssen_modified = None
 
-st.write(f"**Geselecteerde lengte:** {lnght if lnght else 'Niet ingevuld'}")
-st.write(f"**Geselecteerd geslacht:** {geslacht_txt if geslacht_txt else 'Niet ingevuld'}")
-
 # ======================
 # Gewicht & Resistentie
 # ======================
@@ -111,32 +129,33 @@ if None not in (lnght, wght, bia_res, sex_janssen_modified):
         st.success(f"Spiermassa: {spiermassa:.2f} kg")
 
         # ======================
-        # Opslaan
+        # Opslaan in database
         # ======================
         if st.button("Opslaan"):
 
-            nieuwe_rij = pd.DataFrame([{
-                "ID": id_keuze,
-                "Gender": geslacht_txt,
-                "Lengte_cm": lnght,
-                "Gewicht_kg": wght,
-                "Resistentie": bia_res,
-                "Spiermassa": spiermassa,
-                "Datum": datetime.now()
-            }])
+            c.execute("""
+                INSERT INTO metingen 
+                (id, gender, lengte, gewicht, resistentie, spiermassa, datum)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                id_keuze,
+                geslacht_txt,
+                lnght,
+                wght,
+                bia_res,
+                spiermassa,
+                str(datetime.now())
+            ))
 
-            if os.path.exists("metingen.csv"):
-                oud = pd.read_csv("metingen.csv")
-                nieuwe_rij = pd.concat([oud, nieuwe_rij], ignore_index=True)
-
-            nieuwe_rij.to_csv("metingen.csv", index=False)
-            st.info("Meting opgeslagen ✔")
+            conn.commit()
+            st.success("Meting opgeslagen ✔")
 
 # ======================
-# Bekijk metingen
+# Alle metingen tonen
 # ======================
-if os.path.exists("metingen.csv"):
-    st.subheader("Alle opgeslagen metingen")
-    df_metingen = pd.read_csv("metingen.csv")
-    st.dataframe(df_metingen)
+st.subheader("Alle opgeslagen metingen")
+
+df_metingen = pd.read_sql_query("SELECT * FROM metingen", conn)
+st.dataframe(df_metingen)
+
 
