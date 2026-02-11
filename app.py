@@ -29,55 +29,69 @@ persoon = basis[basis["ID"] == id_keuze].iloc[0]
 # ======================
 # Lengte input
 # ======================
-default_lnght = persoon["lnght"] if not pd.isna(persoon["lnght"]) else None
+default_lengte = None if pd.isna(persoon["lnght"]) else float(persoon["lnght"])
+
 lnght = st.number_input(
     "Lengte (cm)",
     min_value=50.0,
     max_value=250.0,
     step=0.1,
-    value=float(default_lnght) if default_lnght is not None else 170.0
+    value=default_lengte
 )
 
 # ======================
 # Geslacht input
 # ======================
-if pd.isna(persoon["sex_janssen_modified"]):
-    st.warning("Geslacht ontbreekt voor dit ID. Kies hieronder:")
-    geslacht_txt = st.selectbox("Geslacht", ["Man", "Vrouw"])
-    sex_janssen_modified = 1 if geslacht_txt == "Man" else 0
-else:
-    sex_janssen_modified = persoon["sex_janssen_modified"]
-    geslacht_txt = "Man" if sex_janssen_modified == 1 else "Vrouw"
-    geslacht_txt = st.selectbox("Geslacht", ["Man", "Vrouw"], index=0 if sex_janssen_modified == 1 else 1)
-    sex_janssen_modified = 1 if geslacht_txt == "Man" else 0
+opties = ["", "Man", "Vrouw"]
 
-st.write(f"**Geselecteerde lengte:** {lnght} cm")
-st.write(f"**Geselecteerd geslacht:** {geslacht_txt}")
+if not pd.isna(persoon["sex_janssen_modified"]):
+    sex_val = int(persoon["sex_janssen_modified"])
+    default_index = 1 if sex_val == 1 else 2
+else:
+    default_index = 0
+
+geslacht_txt = st.selectbox(
+    "Geslacht",
+    opties,
+    index=default_index
+)
+
+if geslacht_txt == "Man":
+    sex_janssen_modified = 1
+elif geslacht_txt == "Vrouw":
+    sex_janssen_modified = 0
+else:
+    sex_janssen_modified = None
+
+st.write(f"**Geselecteerde lengte:** {lnght if lnght else 'Niet ingevuld'}")
+st.write(f"**Geselecteerd geslacht:** {geslacht_txt if geslacht_txt else 'Niet ingevuld'}")
 
 # ======================
-# User input: Gewicht & Resistentie
+# Gewicht & Resistentie
 # ======================
 wght = st.number_input(
     "Gewicht (kg)",
     min_value=30.0,
     max_value=200.0,
-    step=0.1
+    step=0.1,
+    value=None
 )
 
 bia_res = st.number_input(
     "Resistentie",
     min_value=1.0,
     max_value=1000.0,
-    step=1.0
+    step=1.0,
+    value=None
 )
 
 # ======================
 # Berekeningsfunctie
 # ======================
-def bereken_spiermassa(lnght, wght, bia_res, sex_janssen_modified):
+def bereken_spiermassa(lnght, wght, bia_res, sex):
     try:
         spiermassa = (
-            (0.827 + (0.19 * (lnght**2 / bia_res)) + (2.101 * sex_janssen_modified) + (0.079 * wght))
+            (0.827 + (0.19 * (lnght**2 / bia_res)) + (2.101 * sex) + (0.079 * wght))
             / ((lnght**2) / 10000)
         )
         return spiermassa
@@ -85,19 +99,22 @@ def bereken_spiermassa(lnght, wght, bia_res, sex_janssen_modified):
         return None
 
 # ======================
-# Berekening + resultaat
+# Berekening
 # ======================
-if wght > 0 and bia_res > 0:
+if None not in (lnght, wght, bia_res, sex_janssen_modified):
+
     spiermassa = bereken_spiermassa(lnght, wght, bia_res, sex_janssen_modified)
+
     if spiermassa is None:
         st.error("Fout in berekening: Resistentie mag niet nul zijn.")
     else:
         st.success(f"Spiermassa: {spiermassa:.2f} kg")
 
         # ======================
-        # Opslaan in CSV
+        # Opslaan
         # ======================
         if st.button("Opslaan"):
+
             nieuwe_rij = pd.DataFrame([{
                 "ID": id_keuze,
                 "Gender": geslacht_txt,
@@ -116,9 +133,10 @@ if wght > 0 and bia_res > 0:
             st.info("Meting opgeslagen ✔")
 
 # ======================
-# Bekijk alle metingen
+# Bekijk metingen
 # ======================
 if os.path.exists("metingen.csv"):
     st.subheader("Alle opgeslagen metingen")
     df_metingen = pd.read_csv("metingen.csv")
     st.dataframe(df_metingen)
+
