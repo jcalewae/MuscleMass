@@ -1,5 +1,4 @@
 import base64
-import os
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -71,20 +70,19 @@ default_geslacht_index = 0
 
 if persoon is not None and "sex_janssen_modified" in basis.columns:
     sex_uit_csv = persoon["sex_janssen_modified"]
-
     if pd.isna(sex_uit_csv):
         st.warning("Geslacht ontbreekt voor dit SAMU nummer / ID. Kies hieronder:")
     else:
         default_geslacht_index = 0 if int(sex_uit_csv) == 1 else 1
 
 geslacht_txt = st.selectbox("Geslacht", geslacht_opties, index=default_geslacht_index)
-sex_janssen_modified = 1 if geslacht_txt == "Man" else 0
+sex = 1 if geslacht_txt == "Man" else 0
 
 st.write(f"**Geselecteerde lengte:** {lnght} cm")
 st.write(f"**Geselecteerd geslacht:** {geslacht_txt}")
 
 # ======================
-# Gewicht & Resistentie
+# Gewicht, Resistentie & Reactantie
 # ======================
 wght = st.number_input(
     "Gewicht (kg)",
@@ -94,40 +92,58 @@ wght = st.number_input(
 )
 
 bia_res = st.number_input(
-    "Resistentie",
+    "Resistentie (Ω)",
     min_value=1.0,
     max_value=1000.0,
     step=1.0,
 )
 
+xc = st.number_input(
+    "Reactantie Xc (Ω)",
+    min_value=0.0,
+    max_value=500.0,
+    step=0.1,
+)
+
 # ======================
-# Berekening
+# Berekeningen
 # ======================
-def bereken_spiermassa(lnght, wght, bia_res, sex_janssen_modified):
+def bereken_janssen(lnght, wght, bia_res, sex):
     try:
-        spiermassa = (
-            (
-                0.827
-                + (0.19 * (lnght**2 / bia_res))
-                + (2.101 * sex_janssen_modified)
-                + (0.079 * wght)
-            )
-            / ((lnght**2) / 10000)
+        sm_index = (
+            0.827
+            + (0.19 * (lnght**2 / bia_res))
+            + (2.101 * sex)
+            + (0.079 * wght)
+        ) / ((lnght**2) / 10000)
+        return sm_index
+    except ZeroDivisionError:
+        return None
+
+
+def bereken_sergi(lnght, wght, bia_res, sex, xc):
+    try:
+        ri = (lnght**2) / bia_res
+        asmm_kg = (
+            -3.964
+            + (0.227 * ri)
+            + (0.095 * wght)
+            + (1.384 * sex)
+            + (0.064 * xc)
         )
-        return spiermassa
+        asmm_index = asmm_kg / ((lnght**2) / 10000)
+        return asmm_index
     except ZeroDivisionError:
         return None
 
 
 def sla_meting_lokaal_op(nieuwe_meting):
     nieuwe_rij = pd.DataFrame([nieuwe_meting])
-
     if metingen_bestand.exists():
         bestaande_metingen = pd.read_csv(metingen_bestand)
         alle_metingen = pd.concat([bestaande_metingen, nieuwe_rij], ignore_index=True)
     else:
         alle_metingen = nieuwe_rij
-
     alle_metingen.to_csv(metingen_bestand, index=False)
     return alle_metingen
 
@@ -162,14 +178,10 @@ def sla_metingen_op_in_github(df_metingen):
     }
 
     bestaand_bestand = requests.get(
-        url,
-        headers=headers,
-        params={"ref": github_branch},
-        timeout=20,
+        url, headers=headers, params={"ref": github_branch}, timeout=20,
     )
 
     sha = None
-
     if bestaand_bestand.status_code == 200:
         sha = bestaand_bestand.json()["sha"]
     elif bestaand_bestand.status_code != 404:
@@ -184,7 +196,6 @@ def sla_metingen_op_in_github(df_metingen):
         "content": inhoud_base64,
         "branch": github_branch,
     }
-
     if sha is not None:
         data["sha"] = sha
 
@@ -200,12 +211,23 @@ def sla_metingen_op_in_github(df_metingen):
 # Resultaat + opslaan
 # ======================
 if wght > 0 and bia_res > 0:
-    spiermassa = bereken_spiermassa(lnght, wght, bia_res, sex_janssen_modified)
+    janssen_index = bereken_janssen(lnght, wght, bia_res, sex)
+    sergi_index = bereken_sergi(lnght, wght, bia_res, sex, xc)
 
-    if spiermassa is None:
+    if None in (janssen_index, sergi_index):
         st.error("Fout in berekening: Resistentie mag niet nul zijn.")
     else:
-        st.success(f"Spiermassa: {spiermassa:.2f} kg")
+        st.subheader("Resultaten")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Janssen (gemodificeerd)**")
+            st.metric("Spiermassa index (kg/m²)", f"{janssen_index:.2f} kg/m²")
+
+        with col2:
+            st.markdown("**Sergi**")
+            st.metric("Spiermassa index (kg/m²)", f"{sergi_index:.2f} kg/m²")
 
         if st.button("Opslaan"):
             nieuwe_meting = {
@@ -214,7 +236,9 @@ if wght > 0 and bia_res > 0:
                 "Lengte_cm": lnght,
                 "Gewicht_kg": wght,
                 "Resistentie": bia_res,
-                "Spiermassa": round(spiermassa, 2),
+                "Reactantie_Xc": xc,
+                "Janssen_index_kg_m2": round(janssen_index, 2),
+                "Sergi_index_kg_m2": round(sergi_index, 2),
                 "Datum": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
 
